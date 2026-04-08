@@ -5,6 +5,9 @@ __pycache__/
 
 # C extensions
 *.so
+deploy.sh
+node_modules
+knowledge_base
 
 # Distribution / packaging
 .Python
