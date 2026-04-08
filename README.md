@@ -5,20 +5,20 @@
   <img src="frontend/public/Frontend2.png" alt="Frontend" width="46%" />
 </p>
 
-Ein schlankes RAG-basiertes Chat-System fuer das TOPSIM-Planspiel.  
-Das Projekt kombiniert ein React-Frontend mit einem FastAPI-Backend und bindet festen Wissenskontext aus einem Handbuch bzw. einer Knowledge Base in jede Anfrage an Mistral AI ein.
+Ein schlankes RAG-basiertes Chat-System für das TOPSIM-Planspiel.  
+Das Projekt kombiniert ein React-Frontend mit einem FastAPI-Backend (WSS) und bindet festen Wissenskontext aus hunderten Unternehmensbilanzen, Handbüchern, und FAQs aus letzten Semestern. Mit diesem zusätzlichen Kontext kann Mistral AI individuelle Fragen der Studierenden beantworten.
 
 ## Ueberblick
 
-Das System ist darauf ausgelegt, Studierende bei Planspielentscheidungen zu unterstuetzen, ohne Entscheidungen abzunehmen. Antworten werden mit einem vordefinierten System-Prompt und einem geladenen Handbuch-Kontext angereichert und koennen sowohl klassisch per HTTP als auch per WebSocket-Streaming ausgeliefert werden.
+Das simple System ist darauf ausgelegt, Studierende bei Planspielentscheidungen zu unterstuetzen, ohne Entscheidungen abzunehmen. Antworten werden mit einem vordefinierten System-Prompt und einem geladenen Kontext angereichert und koennen sowohl klassisch per HTTP als auch per WebSocket-Streaming ausgeliefert werden.
 
 ## Features
 
-- React-Frontend mit Chat-Oberflaeche und Markdown-Ausgabe
-- FastAPI-Backend fuer Chat- und Health-Endpunkte
-- WebSocket-Streaming fuer laufende Antworten
-- Fester Handbuch-Kontext aus der Knowledge Base
-- Konfigurierbares Mistral-Modell ueber Umgebungsvariablen
+- React-Frontend mit Chat-Oberfläche und Markdown-Ausgabe (in time rendering)
+- FastAPI-Backend für Chat- und Health-Endpunkte
+- WebSocket-Streaming für laufende Antworten
+- Fester Kontext aus der Knowledge Base
+- Konfigurierbares Mistral-Modell über Umgebungsvariablen
 - Einfache lokale Entwicklung mit Vite und Uvicorn
 
 ## Architektur
@@ -26,7 +26,7 @@ Das System ist darauf ausgelegt, Studierende bei Planspielentscheidungen zu unte
 ```text
 React/Vite UI -> FastAPI Backend -> Mistral Chat API
                      |
-                     -> Handbuch / Knowledge Base als fester Kontext
+                     -> Augmentation / Knowledge Base als fester Kontext
 ```
 
 ## Projektstruktur
@@ -58,7 +58,7 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Anschliessend die `.env` mit einem gueltigen API-Key befuellen.
+Anschliessend in die `.env` den gültigen API Key hinterlegen.
 
 ### 2. Frontend einrichten
 
@@ -69,7 +69,7 @@ npm install
 
 ## Konfiguration
 
-Die folgenden Umgebungsvariablen werden unterstuetzt:
+Die folgenden Umgebungsvariablen werden unterstützt:
 
 | Variable | Beschreibung | Standardwert |
 | --- | --- | --- |
@@ -97,7 +97,7 @@ cd frontend
 npm run dev
 ```
 
-Das Frontend laeuft standardmaessig unter `http://localhost:5173`.
+Das Frontend läuft standardmaessig unter `http://localhost:5173`.
 
 ## API-Schnittstellen
 
@@ -161,8 +161,8 @@ Server sendet Streaming-Events:
 
 ## Frontend-Hinweis zur WebSocket-URL
 
-Das Frontend unterstuetzt eine explizite WebSocket-Konfiguration ueber `VITE_WS_URL`.  
-Ohne diese Variable verwendet die Anwendung aktuell standardmaessig eine Deployment-URL nach dem Muster:
+Das Frontend unterstuetzt eine explizite WebSocket-Konfiguration über `VITE_WS_URL`.  
+Ohne diese Variable verwendet die Anwendung aktuell standardmässig eine Deployment-URL nach dem Muster:
 
 ```text
 ws(s)://<host>/test/ws/chat
@@ -182,7 +182,7 @@ VITE_WS_URL=ws://127.0.0.1:8000/ws/chat
 
 ## Einsatzkontext
 
-Dieses Projekt ist als Tutor- und Beratungsoberflaeche fuer ein TOPSIM-/Planspiel-Szenario ausgelegt. Die Antworten sollen fachlich unterstuetzen, aber keine Managemententscheidung automatisiert treffen. Die Verantwortung fuer die Bewertung und Umsetzung bleibt bei den Nutzenden.
+Dieses Projekt ist als Tutor- und Beratungsoberfläche fuer ein TOPSIM-/Planspiel-Szenario ausgelegt. Die Antworten sollen fachlich unterstuetzen, aber keine Managemententscheidung automatisiert treffen. Die Verantwortung für die Bewertung und Umsetzung bleibt bei den Nutzenden.
 
 ## Lizenz
 
