@@ -9,6 +9,8 @@ const initialMessages = [
   },
 ];
 
+const imageBaseUrl = import.meta.env.BASE_URL;
+
 function LoaderBubble() {
   return (
     <div className="message-row assistant">
@@ -115,16 +117,12 @@ function App() {
 
     const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
 
-    // Localhost-Variante (zum lokalen Testen) bewusst auskommentiert lassen:
-    // const frontendHost = window.location.hostname;
-    // const backendHost =
-    //   frontendHost === "localhost" || frontendHost === "::1"
-    //     ? "127.0.0.1"
-    //     : frontendHost;
-    // const defaultWsUrl = `${wsProtocol}://${backendHost}:8000/ws/chat`;
-
-    // Deployment unter /test/ auf derselben Domain:
-    const defaultWsUrl = `${wsProtocol}://${window.location.host}/test/ws/chat`;
+    const frontendHost = window.location.hostname;
+    const isLocalhost = frontendHost === "localhost" || frontendHost === "127.0.0.1" || frontendHost === "::1";
+    const backendHost = isLocalhost ? "127.0.0.1" : frontendHost;
+    const defaultWsUrl = isLocalhost
+      ? `${wsProtocol}://${backendHost}:9000/ws/chat`
+      : `${wsProtocol}://${window.location.host}/test/ws/chat`;
     const wsUrl = import.meta.env.VITE_WS_URL || defaultWsUrl;
 
     let gotFirstDelta = false;
@@ -234,19 +232,19 @@ function App() {
       <div className="pixel-hover" aria-hidden="true" />
       <div className="pixel-art-scene" aria-hidden="true">
         <div className="ai-ref-card ref-gd">
-          <img src="./gradient-descent.png" alt="" loading="lazy" />
+          <img src={`${imageBaseUrl}gradient-descent.png`} alt="" loading="lazy" />
         </div>
         <div className="ai-ref-card ref-nn">
-          <img src="./Streudiagramm.png" alt="" loading="lazy" />
+          <img src={`${imageBaseUrl}Streudiagramm.png`} alt="" loading="lazy" />
         </div>
         <div className="ai-ref-card ref-llm">
-          <img src="./Attention_paper.png" alt="" loading="lazy" />
+          <img src={`${imageBaseUrl}Attention_paper.png`} alt="" loading="lazy" />
         </div>
         <div className="ai-ref-card ref-weights">
-          <img src="./Sigmoid.png" alt="" loading="lazy" />
+          <img src={`${imageBaseUrl}Sigmoid.png`} alt="" loading="lazy" />
         </div>
         <div className="ai-ref-card ref-neuronales-netz">
-          <img src="./Neoronales_Netz.png" alt="" loading="lazy" />
+          <img src={`${imageBaseUrl}Neoronales_Netz.png`} alt="" loading="lazy" />
         </div>
       </div>
       <main className="chat-layout">

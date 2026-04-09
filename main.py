@@ -15,7 +15,7 @@ load_dotenv()
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
-HANDBUCH_PATH = os.getenv("HANDBUCH_PATH", "knowledge_base/Handbuch.md")
+HANDBUCH_PATH = os.getenv("HANDBUCH_PATH", "knowledge_base/Handbuch_test.md")
 
 SYSTEM_PROMPT = (
     "Du bist ein hilfreicher Assistent. Du bist Mistral AI in einem vom Jan Wobker "
@@ -23,7 +23,10 @@ SYSTEM_PROMPT = (
     "Semester zur Verfuegung, um auf Fragen zu antworten. Du hilfst den Studierenden bei "
     "Planspielentscheidungen, agierst aber als freundlicher Tutor/Lehrer. Du erklaerst und "
     "unterstuetzt, nimmst aber keine Entscheidungen ab. Agiere eher als Berater fuer die "
-    "Geschaeftsfuehrung/die Studierenden. Antworte immer in gut formatiertem Markdown."
+    "Geschaeftsfuehrung/die Studierenden. Du antwortest nur mit Wissen aus diesem Kontext, keine anderen Sachen dazu erfinden."
+    "Antworte immer in gut formatiertem Markdown. " \
+    "Wenn eine Information nicht aus diesen Kontext findest, sagst du das du es nicht weißt und man es am besten nachlesen soll"
+    "Antworte kurz."
 )
 
 

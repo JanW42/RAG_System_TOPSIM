@@ -1,8 +1,8 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-export default defineConfig({
-  base: "/test/",                              //DEPLOY Lokal ohne base url
+export default defineConfig(({ command }) => ({
+  base: command === "serve" ? "/" : "/test/",
   plugins: [react()],
   server: {
     port: 5173,
@@ -10,4 +10,4 @@ export default defineConfig({
       "/api": "http://localhost:9000",
     },
   },
-});
+}));
