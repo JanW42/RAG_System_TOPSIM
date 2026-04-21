@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -14,8 +15,23 @@ from pydantic import BaseModel, Field
 from mistral_tools import TOOLS_JSON, run_tool
 from settings import PERIOD_DATE_RANGES
 
-
 load_dotenv()
+
+
+def _configure_logging() -> logging.Logger:
+    level_name = os.getenv("APP_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, level_name, logging.INFO)
+    fmt = os.getenv(
+        "APP_LOG_FORMAT",
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+    logging.basicConfig(level=level, format=fmt)
+    logger_obj = logging.getLogger("rag.main")
+    logger_obj.debug("Logging initialisiert (level=%s).", level_name)
+    return logger_obj
+
+
+logger = _configure_logging()
 
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
@@ -262,6 +278,11 @@ async def _build_messages(messages: List[Message]) -> List[dict]:
     model_messages.insert(0, {"role": "system", "content": SYSTEM_PROMPT})
     model_messages.insert(1, {"role": "system", "content": HANDBUCH_PROMPT})
     model_messages.insert(2, {"role": "system", "content": runtime_context_prompt})
+    logger.debug(
+        "Messages gebaut: incoming=%d, outgoing=%d (inkl. 3 Systemnachrichten).",
+        len(messages),
+        len(model_messages),
+    )
     return model_messages
 
 
@@ -278,6 +299,13 @@ async def _post_mistral(messages: List[dict], timeout_seconds: float = 60.0) -> 
         "tools": TOOLS_JSON,
         "tool_choice": "auto",
     }
+    logger.debug(
+        "POST Mistral: model=%s, messages=%d, tools=%d, timeout=%.1fs",
+        MISTRAL_MODEL,
+        len(messages),
+        len(TOOLS_JSON),
+        timeout_seconds,
+    )
 
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
         response = await client.post(
@@ -285,6 +313,7 @@ async def _post_mistral(messages: List[dict], timeout_seconds: float = 60.0) -> 
             headers=headers,
             json=payload,
         )
+        logger.debug("Mistral response status=%s", response.status_code)
         response.raise_for_status()
         return response.json()
 
@@ -304,16 +333,25 @@ def _normalize_content(content: Any) -> str:
 async def _run_mistral_with_tools(messages: List[dict], max_rounds: int = 5) -> str:
     working_messages = list(messages)
 
-    for _ in range(max_rounds):
+    for round_idx in range(1, max_rounds + 1):
+        logger.debug("Tool-Loop Runde %d gestartet (messages=%d).", round_idx, len(working_messages))
         result = await _post_mistral(messages=working_messages, timeout_seconds=90.0)
         assistant_message = _extract_message_from_completion(result)
         if not assistant_message:
+            logger.warning("Leere Assistant-Message in Runde %d.", round_idx)
             return ""
 
         tool_calls = assistant_message.get("tool_calls") or []
         assistant_content = _normalize_content(assistant_message.get("content", ""))
+        logger.debug(
+            "Runde %d: tool_calls=%d, assistant_content_len=%d",
+            round_idx,
+            len(tool_calls),
+            len(assistant_content),
+        )
 
         if not tool_calls:
+            logger.debug("Finale Antwort in Runde %d ohne weitere Tool-Calls.", round_idx)
             return assistant_content
 
         history_assistant_message = {
@@ -328,7 +366,13 @@ async def _run_mistral_with_tools(messages: List[dict], max_rounds: int = 5) -> 
             function_data = _as_dict(tool_call_data.get("function", {}))
             tool_name = function_data.get("name", "")
             tool_args = function_data.get("arguments", {})
+            logger.debug("Tool-Call erkannt: name=%s, call_id=%s", tool_name, tool_call_data.get("id", ""))
             tool_result = run_tool(tool_name=tool_name, arguments_raw=tool_args)
+            logger.debug(
+                "Tool-Call abgeschlossen: name=%s, result_keys=%s",
+                tool_name,
+                list(tool_result.keys()) if isinstance(tool_result, dict) else type(tool_result).__name__,
+            )
 
             working_messages.append(
                 {
@@ -339,15 +383,18 @@ async def _run_mistral_with_tools(messages: List[dict], max_rounds: int = 5) -> 
                 }
             )
 
+    logger.warning("Maximale Tool-Rundenzahl erreicht (%d).", max_rounds)
     return "Die Tool-Ausfuehrung hat die maximale Rundenzahl erreicht."
 
 
 async def _stream_mistral_via_http(messages: List[dict], websocket: WebSocket) -> None:
     final_text = await _run_mistral_with_tools(messages=messages)
     if not final_text:
+        logger.warning("Kein finaler Text fuer Streaming erzeugt.")
         return
 
     chunk_size = 120
+    logger.debug("Streaming gestartet: text_len=%d, chunk_size=%d", len(final_text), chunk_size)
     for i in range(0, len(final_text), chunk_size):
         await websocket.send_json({"type": "delta", "content": final_text[i : i + chunk_size]})
 
@@ -355,6 +402,8 @@ async def _stream_mistral_via_http(messages: List[dict], websocket: WebSocket) -
 @app.websocket("/ws/chat")
 async def chat_ws(websocket: WebSocket):
     await websocket.accept()
+    client = getattr(websocket, "client", None)
+    logger.info("WebSocket connected: %s", client)
 
     if not MISTRAL_API_KEY:
         await websocket.send_json(
@@ -370,16 +419,20 @@ async def chat_ws(websocket: WebSocket):
         while True:
             payload = await websocket.receive_json()
             request = ChatRequest.model_validate(payload)
+            logger.debug("WS request empfangen: messages=%d", len(request.messages))
             messages = await _build_messages(request.messages)
 
             try:
                 await _stream_mistral_via_http(messages=messages, websocket=websocket)
                 await websocket.send_json({"type": "done"})
             except Exception as exc:
+                logger.exception("Fehler im WS-Request-Loop: %s", exc)
                 await websocket.send_json({"type": "error", "content": str(exc)})
     except WebSocketDisconnect:
+        logger.info("WebSocket disconnected: %s", client)
         return
     except Exception as exc:
+        logger.exception("Unerwarteter WebSocket-Fehler: %s", exc)
         await websocket.send_json({"type": "error", "content": str(exc)})
         await websocket.close(code=1011)
 
@@ -387,20 +440,25 @@ async def chat_ws(websocket: WebSocket):
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(request: ChatRequest) -> ChatResponse:
     _require_api_key()
+    logger.info("HTTP /api/chat request: messages=%d", len(request.messages))
 
     messages = await _build_messages(request.messages)
     try:
         message = await _run_mistral_with_tools(messages=messages, max_rounds=5)
     except httpx.HTTPStatusError as exc:
+        logger.exception("HTTPStatusError von Mistral: %s", exc)
         raise HTTPException(
             status_code=exc.response.status_code,
             detail=f"Mistral API error: {exc.response.text}",
         ) from exc
     except httpx.HTTPError as exc:
+        logger.exception("HTTPError von Mistral: %s", exc)
         raise HTTPException(status_code=502, detail=f"Mistral API error: {str(exc)}") from exc
     if not message:
+        logger.warning("Leere Antwort von Mistral fuer /api/chat.")
         raise HTTPException(status_code=502, detail="Mistral API returned an empty reply.")
 
+    logger.debug("HTTP /api/chat response_len=%d", len(message))
     return ChatResponse(message=message)
 
 
