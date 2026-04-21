@@ -40,7 +40,7 @@ React/Vite UI
 |- knowledge_base/
 |- ML_models/
 |  |- Potenzieller_Absatz_p1.joblib
-|  `- Erfolgswert_p1.joblib
+|  |- Erfolgswert_p1.joblib
 |- main.py
 |- mistral_tools.py
 |- settings.py
@@ -103,17 +103,23 @@ Ausgabe:
 Modell:
 - `ML_models/Erfolgswert_p1.joblib`
 
-## Dynamischer Kontext
+## Wichtige Hinweise
 
-`main.py` fuegt pro Request drei Systemnachrichten ein:
+- Die Periodendaten koennen nicht live abgerufen werden.
+- Es geschieht keine Datenbankabfrage der aktuellen Unternehmenskennzahlen.
+- Die Periodenlogik basiert ausschliesslich auf den statischen Werten in `settings.py` (`PERIOD_DATE_RANGES`).
 
-1. `SYSTEM_PROMPT`
-2. `HANDBUCH_PROMPT`
-3. Runtime-Kontext (`_build_runtime_context_prompt`)
+## Nutzung im Chat (Beispiele)
 
-Der Runtime-Kontext enthaelt:
-- aktuelles Datum/Uhrzeit in interner Systemzeit
-- aktuelle Periodeninfo aus `settings.py`
+Du kannst im Chat direkt natuerlich formulieren. Typische Fragen sind zum Beispiel:
+
+1. `Wie viel Zeit habe ich noch bis zur Abgabe?`
+2. `Gebe mir eine Einschaetzung ueber den potenziellen Absatz, den ich mit Preis 146, Werbung 342 und 8 Vertriebsmitarbeitern erreichen kann.`
+3. `Gehe die Zahlen einmal durch und schaetze den Erfolgswert fuer Preis 146, Werbung 342, Vertrieb 8, Qualitaet 0, Fertigungsmenge 40000, Investition 0, Fertigungspersonal 23 und angenommenen Absatz 41000.`
+
+Hinweis:
+- Fuer praezise Prognosen helfen konkrete Zahlen je Eingabefeld.
+- Ohne konkrete Werte antwortet der Assistent eher qualitativ.
 
 ## Voraussetzungen
 
@@ -196,41 +202,7 @@ Liefert Status und Handbuch-Load-Infos.
 
 ### `POST /api/chat`
 
-Request:
-
-```json
-{
-  "messages": [
-    { "role": "user", "content": "Wie ist die Lage?" }
-  ]
-}
-```
-
-Response:
-
-```json
-{
-  "message": "..."
-}
-```
-
 ### `WS /ws/chat`
-
-Client sendet:
-
-```json
-{
-  "messages": [
-    { "role": "user", "content": "Gib mir eine kurze Einschaetzung." }
-  ]
-}
-```
-
-Server sendet:
-
-- `{ "type": "delta", "content": "..." }`
-- `{ "type": "done" }`
-- `{ "type": "error", "content": "..." }`
 
 ## Lizenz
 
