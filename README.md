@@ -5,51 +5,125 @@
   <img src="frontend/public/Frontend2.png" alt="Frontend" width="46%" />
 </p>
 
-Ein schlankes RAG-basiertes Chat-System für das TOPSIM-Planspiel.  
-Das Projekt kombiniert ein React-Frontend mit einem FastAPI-Backend (WSS) und bindet festen Wissenskontext aus hunderten Unternehmensbilanzen, Handbüchern, und FAQs aus letzten Semestern. Mit diesem zusätzlichen Kontext kann Mistral AI individuelle Fragen der Studierenden beantworten.
-
-## Ueberblick
-
-Das simple System ist darauf ausgelegt, Studierende bei Planspielentscheidungen zu unterstuetzen, ohne Entscheidungen abzunehmen. Antworten werden mit einem vordefinierten System-Prompt und einem geladenen Kontext angereichert und koennen sowohl klassisch per HTTP als auch per WebSocket-Streaming ausgeliefert werden.
+Ein RAG-basiertes Chat-System fuer das TOPSIM-Planspiel mit React-Frontend und FastAPI-Backend.
+Das Backend nutzt die Mistral Chat Completions API, festen Handbuch-Kontext und Tool Calling (Wetter + ML-Inferenz).
 
 ## Features
 
-- React-Frontend mit Chat-Oberfläche und Markdown-Ausgabe (in time rendering)
-- FastAPI-Backend für Chat- und Health-Endpunkte
-- WebSocket-Streaming für laufende Antworten
-- Fester Kontext aus der Knowledge Base
-- Konfigurierbares Mistral-Modell über Umgebungsvariablen
-- Einfache lokale Entwicklung mit Vite und Uvicorn
+- React Chat-Frontend mit Streaming-Ausgabe (WebSocket)
+- FastAPI Backend (`/api/chat`, `/api/health`, `/ws/chat`)
+- Tool Calling mit Mistral (`tool_choice=auto`)
+- Zwei ML-Vorhersage-Tools (Periode 1) ueber `joblib`-Modelle
+- Wetter-Tool via Open-Meteo API
+- Dynamisches Kontext-Engineering im Systemkontext:
+  - aktuelle Uhrzeit/Tag (interne Systemzeit)
+  - aktuelle Periode anhand `settings.py` (`start_date`, `end_date`, `end_uhrzeit`)
+- Fester Handbuch-Kontext aus `knowledge_base/Handbuch_erweitert.md`
 
 ## Architektur
 
 ```text
-React/Vite UI -> FastAPI Backend -> Mistral Chat API
-                     |
-                     -> Augmentation / Knowledge Base als fester Kontext
+React/Vite UI
+   -> FastAPI Backend (main.py)
+      -> Mistral Chat Completions API
+      -> Tool Layer (mistral_tools.py)
+         -> Wetter API (Open-Meteo)
+         -> ML Inferenz (joblib: Absatz/Erfolgswert)
+      -> Handbuch-Kontext (knowledge_base/*.md)
 ```
 
 ## Projektstruktur
 
 ```text
 .
-|- frontend/                 # React-Frontend mit Vite
-|- knowledge_base/           # Fachlicher Kontext / Handbuch
-|- main.py                   # FastAPI-Backend
-|- requirements.txt          # Python-Abhaengigkeiten
-|- .env.example              # Beispiel fuer Umgebungsvariablen
-`- README.md
+|- frontend/
+|- knowledge_base/
+|- ML_models/
+|  |- Potenzieller_Absatz_p1.joblib
+|  `- Erfolgswert_p1.joblib
+|- main.py
+|- mistral_tools.py
+|- settings.py
+|- requirements.txt
+|- .env.example
+`- example.env
 ```
+
+## Tool Calling
+
+In `mistral_tools.py` sind aktuell folgende Tools registriert:
+
+1. `weather_info`
+2. `predict_potentieller_absatz_p1`
+3. `predict_erfolgswert_p1`
+
+Die Tools werden im Mistral-Request als `tools` mitgegeben. Die Orchestrierung (Tool Calls erkennen, Tool ausfuehren, `role="tool"` zurueckgeben, Folgerunde starten) passiert in `main.py` in `_run_mistral_with_tools(...)`.
+
+## ML-Tools (Periode 1)
+
+### 1) Potenzieller Absatz
+
+Tool: `predict_potentieller_absatz_p1`
+
+Eingaben:
+- `preis`
+- `werbung`
+- `vertrieb`
+- `qualitaet`
+- optional: `fertigungspersonal` (Default 23)
+- optional: `investition` (Default 0)
+
+Ausgaben:
+- Prognose potenzieller Absatz
+- geschaetzter tatsaechlicher Absatz (kapazitaetsbegrenzt)
+- geschaetzter Umsatz
+- Zusatzinfo: aktueller Lagerbestand liegt bei 1000
+- zusaetzliche beschreibende Textfelder (`*_text`)
+
+Modell:
+- `ML_models/Potenzieller_Absatz_p1.joblib`
+
+### 2) Erfolgswert
+
+Tool: `predict_erfolgswert_p1`
+
+Eingaben:
+- `preis`
+- `werbung`
+- `vertrieb`
+- `qualitaet`
+- `fertigungsmenge`
+- `investition`
+- `fertigungspersonal`
+- `angenommener_absatz`
+
+Ausgabe:
+- Prognose Erfolgswert (Periode 1)
+
+Modell:
+- `ML_models/Erfolgswert_p1.joblib`
+
+## Dynamischer Kontext
+
+`main.py` fuegt pro Request drei Systemnachrichten ein:
+
+1. `SYSTEM_PROMPT`
+2. `HANDBUCH_PROMPT`
+3. Runtime-Kontext (`_build_runtime_context_prompt`)
+
+Der Runtime-Kontext enthaelt:
+- aktuelles Datum/Uhrzeit in interner Systemzeit
+- aktuelle Periodeninfo aus `settings.py`
 
 ## Voraussetzungen
 
 - Python 3.10+
 - Node.js 18+
-- Ein gueltiger Mistral API Key
+- Gueltiger Mistral API Key
 
 ## Installation
 
-### 1. Backend einrichten
+### Backend
 
 ```powershell
 python -m venv .venv
@@ -58,75 +132,76 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Anschliessend in die `.env` den gültigen API Key hinterlegen.
-
-### 2. Frontend einrichten
+### Frontend
 
 ```powershell
 cd frontend
 npm install
 ```
 
-## Konfiguration
+## Konfiguration (`.env`)
 
-Die folgenden Umgebungsvariablen werden unterstützt:
+Relevante Variablen:
 
-| Variable | Beschreibung | Standardwert |
-| --- | --- | --- |
-| `MISTRAL_API_KEY` | API-Key fuer Mistral AI | leer |
-| `MISTRAL_MODEL` | Zu verwendendes Chat-Modell | `mistral-small-latest` |
-| `HANDBUCH_PATH` | Pfad zur Handbuch-/Kontextdatei | `knowledge_base/Handbuch.md` |
+- `MISTRAL_API_KEY`
+- `MISTRAL_MODEL` (Default: `mistral-small-latest`)
+- `HANDBUCH_PATH` (Default in Code: `knowledge_base/Handbuch_erweitert.md`)
+- `WEATHER_LAT`
+- `WEATHER_LON`
+- `WEATHER_LOCATION_LABEL`
+- `UVICORN_HOST` (optional)
+- `UVICORN_PORT` (optional, Default in Code aktuell `8004`)
+- `UVICORN_RELOAD` (optional, `true/false`)
+- `UVICORN_LOG_LEVEL` (optional)
 
-Hinweis: Wenn das Handbuch nicht geladen werden kann, startet das Backend trotzdem, liefert aber Antworten ohne diesen Zusatzkontext.
+Hinweis: Die Zeit-/Periodenlogik wird ueber `settings.py` gesteuert, nicht ueber `.env`.
 
 ## Anwendung starten
 
-### Backend starten
+### Backend
 
 ```powershell
 .venv\Scripts\activate
-uvicorn main:app --reload
+python main.py
 ```
 
-Das Backend ist anschliessend unter `http://127.0.0.1:8000` erreichbar.
+oder:
 
-### Frontend starten
+```powershell
+uvicorn main:app --reload --port 8004
+```
+
+### Frontend
 
 ```powershell
 cd frontend
 npm run dev
 ```
 
-Das Frontend läuft standardmaessig unter `http://localhost:5173`.
+## Ports und lokale Entwicklung
 
-## API-Schnittstellen
+- Frontend laeuft standardmaessig auf `http://localhost:5173`
+- Backend-Default in `main.py`: Port `8004`
+- `frontend/src/App.jsx` nutzt lokal fuer WebSocket derzeit ebenfalls `:8004`
 
-### Health Check
+Wichtig:
+- In `frontend/vite.config.js` zeigt der `/api` Proxy aktuell auf `http://localhost:9000`.
+- Wenn du `/api` lokal nutzen willst, passe entweder den Backend-Port oder den Proxy an.
 
-- `GET /api/health`
+## API Endpunkte
 
-Beispielhafte Rueckgabe:
+### `GET /api/health`
 
-```json
-{
-  "status": "ok",
-  "model": "mistral-small-latest",
-  "handbuch_path": "knowledge_base/Handbuch.md",
-  "handbuch_loaded": true,
-  "handbuch_chars": 12345
-}
-```
+Liefert Status und Handbuch-Load-Infos.
 
-### Chat per HTTP
-
-- `POST /api/chat`
+### `POST /api/chat`
 
 Request:
 
 ```json
 {
   "messages": [
-    { "role": "user", "content": "Wie sollte ich die Preisstrategie bewerten?" }
+    { "role": "user", "content": "Wie ist die Lage?" }
   ]
 }
 ```
@@ -139,51 +214,24 @@ Response:
 }
 ```
 
-### Chat per WebSocket
-
-- `WS /ws/chat`
+### `WS /ws/chat`
 
 Client sendet:
 
 ```json
 {
   "messages": [
-    { "role": "user", "content": "Analysiere die aktuelle Situation." }
+    { "role": "user", "content": "Gib mir eine kurze Einschaetzung." }
   ]
 }
 ```
 
-Server sendet Streaming-Events:
+Server sendet:
 
 - `{ "type": "delta", "content": "..." }`
 - `{ "type": "done" }`
 - `{ "type": "error", "content": "..." }`
 
-## Frontend-Hinweis zur WebSocket-URL
-
-Das Frontend unterstuetzt eine explizite WebSocket-Konfiguration über `VITE_WS_URL`.  
-Ohne diese Variable verwendet die Anwendung aktuell standardmässig eine Deployment-URL nach dem Muster:
-
-```text
-ws(s)://<host>/test/ws/chat
-```
-
-Fuer lokale Entwicklung kann `VITE_WS_URL` daher sinnvoll sein, zum Beispiel:
-
-```env
-VITE_WS_URL=ws://127.0.0.1:8000/ws/chat
-```
-
-## Entwicklungs-Stack
-
-- Backend: FastAPI, httpx, python-dotenv, Uvicorn
-- Frontend: React 18, Vite, Streamdown
-- KI-Anbindung: Mistral Chat Completions API
-
-## Einsatzkontext
-
-Dieses Projekt ist als Tutor- und Beratungsoberfläche fuer ein TOPSIM-/Planspiel-Szenario ausgelegt. Die Antworten sollen fachlich unterstuetzen, aber keine Managemententscheidung automatisiert treffen. Die Verantwortung für die Bewertung und Umsetzung bleibt bei den Nutzenden.
-
 ## Lizenz
 
-Dieses Projekt steht unter der [MIT-Lizenz](LICENSE).
+MIT, siehe [LICENSE](LICENSE).
