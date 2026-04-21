@@ -121,7 +121,9 @@ function App() {
     const isLocalhost = frontendHost === "localhost" || frontendHost === "127.0.0.1" || frontendHost === "::1";
     const backendHost = isLocalhost ? "127.0.0.1" : frontendHost;
     const defaultWsUrl = isLocalhost
-      ? `${wsProtocol}://${backendHost}:9000/ws/chat`
+      //? `${wsProtocol}://${backendHost}:9000/ws/chat`
+      //Achtung !!!! Beim deployen hier wieder den 9000 Port. 8004 ist für lokal
+      ? `${wsProtocol}://${backendHost}:8004/ws/chat`
       : `${wsProtocol}://${window.location.host}/test/ws/chat`;
     const wsUrl = import.meta.env.VITE_WS_URL || defaultWsUrl;
 
