@@ -20,7 +20,7 @@ load_dotenv()
 MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
-HANDBUCH_PATH = os.getenv("HANDBUCH_PATH", "knowledge_base/Handbuch_test.md")
+HANDBUCH_PATH = os.getenv("HANDBUCH_PATH", "knowledge_base/Handbuch_erweitert.md")
 
 SYSTEM_PROMPT = (
     "Du bist ein hilfreicher Assistent. Du bist Mistral AI in einem von Jan"
@@ -35,6 +35,7 @@ SYSTEM_PROMPT = (
     "Wenn eine Information nicht aus diesen Kontext findest, sagst du, dass du es nicht weißt und man es am besten nachlesen soll"
     "Wenn es um spezifische Probleme geht sage immer, dass du Fehler machen kannst und man sich bei dem Tutor melden kann."
     "Wenn explizit nach Wetter gefragt wird, nutze dafuer das Tool weather_info."
+    "Wenn nach Absatz-/Erfolgswert-Prognosen fuer Periode 1 gefragt wird, nutze die Tools predict_potentieller_absatz_p1 und predict_erfolgswert_p1. Schreibe keine Interpretation oder Rechenbeispiele dazu."
     "Antworte kurz." 
 )
 
