@@ -67,7 +67,7 @@ React/Vite UI
 |- settings.py
 |- requirements.txt
 |- .env.example
-`- example.env
+|- example.env
 ```
 
 ## 🛠️ Tool Calling
@@ -81,7 +81,7 @@ In `mistral_tools.py` sind aktuell folgende Tools registriert:
 Die Tools werden im Mistral-Request als `tools` mitgegeben.  
 Die Orchestrierung (Tool Calls erkennen, Tool ausfuehren, `role="tool"` zurueckgeben, Folgerunde starten) passiert in `main.py` in `_run_mistral_with_tools(...)`.
 
-## 🤖 ML-Tools (Periode 1)
+## 🤖 ML-Tools (P1)
 
 ### 1) Potenzieller Absatz
 
@@ -105,6 +105,8 @@ Ausgaben:
 Modell:
 - `ML_models/Potenzieller_Absatz_p1.joblib`
 
+## 🤖 ML-Tools (P1)
+
 ### 2) Erfolgswert
 
 Tool: `predict_erfolgswert_p1`
@@ -125,14 +127,13 @@ Ausgabe:
 Modell:
 - `ML_models/Erfolgswert_p1.joblib`
 
-## ⚠️ Wichtige Hinweise
+> [!CAUTION]
+> Die Periodendaten koennen nicht live abgerufen werden.
+> Es geschieht keine Datenbankabfrage der aktuellen Unternehmenskennzahlen.
+> Die Periodenlogik basiert ausschliesslich auf den statischen Werten in `settings.py` (`PERIOD_DATE_RANGES`).
 
-- Die Periodendaten koennen nicht live abgerufen werden.
-- Es geschieht keine Datenbankabfrage der aktuellen Unternehmenskennzahlen.
-- Die Periodenlogik basiert ausschliesslich auf den statischen Werten in `settings.py` (`PERIOD_DATE_RANGES`).
 
-
-## ✅ Voraussetzungen
+## Voraussetzungen
 
 - Python 3.10+
 - Node.js 18+
@@ -160,20 +161,23 @@ npm install
 
 Relevante Variablen:
 
-- `MISTRAL_API_KEY`
-- `MISTRAL_MODEL` (Default: `mistral-small-latest`)
-- `HANDBUCH_PATH` (Default in Code: `knowledge_base/Handbuch_erweitert.md`)
-- `WEATHER_LAT`
-- `WEATHER_LON`
-- `WEATHER_LOCATION_LABEL`
-- `UVICORN_HOST` (optional)
-- `UVICORN_PORT` (optional, Default in Code aktuell `8004`)
-- `UVICORN_RELOAD` (optional, `true/false`)
-- `UVICORN_LOG_LEVEL` (optional)
+```env
+MISTRAL_API_KEY=...
+MISTRAL_MODEL=mistral-large-latest
+HANDBUCH_PATH=knowledge_base/Handbuch_erweitert.md
+WEATHER_LAT=...
+WEATHER_LON=...
+WEATHER_LOCATION_LABEL=...
+UVICORN_HOST=127.0.0.1
+UVICORN_PORT=8004
+UVICORN_RELOAD=true
+UVICORN_LOG_LEVEL=info
+APP_LOG_LEVEL=INFO
+```
 
 Hinweis: Die Zeit-/Periodenlogik wird ueber `settings.py` gesteuert, nicht ueber `.env`.
 
-## ▶️ Anwendung starten
+## Anwendung starten
 
 ### Backend
 
@@ -195,7 +199,7 @@ cd frontend
 npm run dev
 ```
 
-## 🌐 Ports und lokale Entwicklung
+## Ports und lokale Entwicklung
 
 - Frontend: `http://localhost:5173`
 - Backend-Default in `main.py`: Port `8004`
@@ -205,7 +209,7 @@ Wichtig:
 - In `frontend/vite.config.js` zeigt der `/api` Proxy aktuell auf `http://localhost:9000`.
 - Wenn du `/api` lokal nutzen willst, passe entweder den Backend-Port oder den Proxy an.
 
-## 🔌 API Endpunkte
+## API Endpunkte
 
 - `GET /api/health`
 - `POST /api/chat`
