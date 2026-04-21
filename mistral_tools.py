@@ -150,6 +150,7 @@ def tool_predict_potentieller_absatz_p1(
             "produktionsfaehigkeit": produktionsfaehigkeit,
             "produktionskapazitaet": produktionskapazitaet,
             "praktische_fertigungsmenge": praktische_fertigungsmenge,
+        "wichtige zusatzinfo": "Ich kann keine korrekten Aussagen über Kosten, Gewinn, Jahresüberschuss oder allen weiteren internen Unternehmenskennzahlen liefern. Wende dich dafür an einen Tutor",
         },
     }
 
@@ -190,6 +191,7 @@ def tool_predict_erfolgswert_p1(
             "investition": investition,
             "fertigungspersonal": fertigungspersonal,
             "angenommener_absatz": angenommener_absatz,
+        "wichtige zusatzinfo": "Ich kann keine korrekten Aussagen über Kosten, Gewinn, Jahresüberschuss oder allen weiteren internen Unternehmenskennzahlen liefern. Wende dich dafür an einen Tutor",
         },
     }
 
