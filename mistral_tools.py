@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Any, Callable, Dict
 import httpx
 import joblib
 import pandas as pd
+
+logger = logging.getLogger("rag.tools")
 
 
 WEATHER_LAT = os.getenv("WEATHER_LAT", "51.96836872216043")
@@ -26,9 +29,15 @@ _feature_cols_erfolg: list[str] | None = None
 def _load_artifact(model_path: Path) -> dict:
     if not model_path.exists():
         raise FileNotFoundError(f"Model file not found: {model_path.resolve()}")
+    logger.debug("Lade Modell-Artefakt: %s", model_path)
     loaded = joblib.load(model_path)
     if "model" not in loaded or "feature_cols" not in loaded:
         raise KeyError("Artifact must contain keys: 'model' and 'feature_cols'.")
+    logger.debug(
+        "Artefakt geladen: %s (feature_cols=%d)",
+        model_path.name,
+        len(loaded.get("feature_cols", [])),
+    )
     return loaded
 
 
@@ -39,6 +48,7 @@ def _ensure_absatz_model_loaded() -> None:
     _artifact_absatz = _load_artifact(MODEL_PATH_ABSATZ)
     _model_absatz = _artifact_absatz["model"]
     _feature_cols_absatz = list(_artifact_absatz["feature_cols"])
+    logger.info("Absatzmodell geladen: %s", MODEL_PATH_ABSATZ)
 
 
 def _ensure_erfolg_model_loaded() -> None:
@@ -48,6 +58,7 @@ def _ensure_erfolg_model_loaded() -> None:
     _artifact_erfolg = _load_artifact(MODEL_PATH_ERFOLG)
     _model_erfolg = _artifact_erfolg["model"]
     _feature_cols_erfolg = list(_artifact_erfolg["feature_cols"])
+    logger.info("Erfolgswertmodell geladen: %s", MODEL_PATH_ERFOLG)
 
 
 def _build_feature_row_absatz(preis: int, werbung: int, vertrieb: int, qualitaet: int):
@@ -109,6 +120,15 @@ def tool_predict_potentieller_absatz_p1(
     fertigungspersonal: int = 23,
     investition: int = 0,
 ) -> dict:
+    logger.debug(
+        "tool_predict_potentieller_absatz_p1 input: preis=%s werbung=%s vertrieb=%s qualitaet=%s fertigungspersonal=%s investition=%s",
+        preis,
+        werbung,
+        vertrieb,
+        qualitaet,
+        fertigungspersonal,
+        investition,
+    )
     _ensure_absatz_model_loaded()
     x_new = _build_feature_row_absatz(
         preis=preis,
@@ -123,6 +143,12 @@ def tool_predict_potentieller_absatz_p1(
     praktische_fertigungsmenge = min(produktionsfaehigkeit, produktionskapazitaet)
     tatsaechlicher_absatz = min(pred_absatz, praktische_fertigungsmenge)
     umsatz = tatsaechlicher_absatz * preis
+    logger.debug(
+        "tool_predict_potentieller_absatz_p1 output: prediction=%.3f tatsaechlicher_absatz=%.3f umsatz=%.3f",
+        pred_absatz,
+        tatsaechlicher_absatz,
+        umsatz,
+    )
 
     return {
         "tool": "predict_potentieller_absatz_p1",
@@ -165,6 +191,17 @@ def tool_predict_erfolgswert_p1(
     fertigungspersonal: int,
     angenommener_absatz: int,
 ) -> dict:
+    logger.debug(
+        "tool_predict_erfolgswert_p1 input: preis=%s werbung=%s vertrieb=%s qualitaet=%s fertigungsmenge=%s investition=%s fertigungspersonal=%s angenommener_absatz=%s",
+        preis,
+        werbung,
+        vertrieb,
+        qualitaet,
+        fertigungsmenge,
+        investition,
+        fertigungspersonal,
+        angenommener_absatz,
+    )
     _ensure_erfolg_model_loaded()
     x_new_erfolg = _build_feature_row_erfolg(
         preis=preis,
@@ -177,6 +214,10 @@ def tool_predict_erfolgswert_p1(
         geplanter_absatz=angenommener_absatz,
     )
     pred_erfolgswert = float(_model_erfolg.predict(x_new_erfolg)[0])
+    logger.debug(
+        "tool_predict_erfolgswert_p1 output: prediction=%.3f",
+        pred_erfolgswert,
+    )
     return {
         "tool": "predict_erfolgswert_p1",
         "periode": 1,
@@ -242,6 +283,7 @@ def tool_weather_info() -> dict:
     """Tool 3: Holt aktuelles Wetter ueber Open-Meteo fuer konfigurierte Koordinaten."""
     lat = _parse_env_float(WEATHER_LAT, 51.96836872216043)
     lon = _parse_env_float(WEATHER_LON, 7.5953305228557975)
+    logger.debug("tool_weather_info input: lat=%s lon=%s", lat, lon)
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
@@ -270,6 +312,12 @@ def tool_weather_info() -> dict:
             return {"tool": "weather_info", "error": "Wetter aktuell nicht verfuegbar."}
 
         weather_text = _translate_weather_code(int(weather_code))
+        logger.debug(
+            "tool_weather_info output: weather=%s temperature=%s wind=%s",
+            weather_text,
+            temperature,
+            wind_speed,
+        )
         return {
             "tool": "weather_info",
             "location": WEATHER_LOCATION_LABEL,
@@ -278,6 +326,7 @@ def tool_weather_info() -> dict:
             "wind_kmh": wind_speed,
         }
     except Exception as exc:
+        logger.exception("tool_weather_info failed: %s", exc)
         return {"tool": "weather_info", "error": f"Wetterabruf fehlgeschlagen: {exc}"}
 
 
@@ -369,8 +418,10 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., dict]] = {
 
 
 def run_tool(tool_name: str, arguments_raw: Any) -> dict:
+    logger.debug("run_tool dispatch: tool_name=%s args_type=%s", tool_name, type(arguments_raw).__name__)
     fn = TOOL_FUNCTIONS.get(tool_name)
     if fn is None:
+        logger.warning("run_tool unknown tool: %s", tool_name)
         return {"error": f"Unbekanntes Tool: {tool_name}"}
 
     args: dict = {}
@@ -380,6 +431,7 @@ def run_tool(tool_name: str, arguments_raw: Any) -> dict:
             if isinstance(parsed, dict):
                 args = parsed
         except json.JSONDecodeError:
+            logger.warning("run_tool invalid json args: tool_name=%s args=%s", tool_name, arguments_raw)
             return {"error": f"Ungueltige Tool-Argumente fuer {tool_name}: {arguments_raw}"}
     elif isinstance(arguments_raw, dict):
         args = arguments_raw
@@ -387,10 +439,13 @@ def run_tool(tool_name: str, arguments_raw: Any) -> dict:
     try:
         result = fn(**args)
     except TypeError as exc:
+        logger.exception("run_tool type error: tool_name=%s", tool_name)
         return {"error": f"Ungueltige Argumente fuer {tool_name}: {exc}"}
     except Exception as exc:
+        logger.exception("run_tool tool error: tool_name=%s", tool_name)
         return {"error": f"Tool-Fehler in {tool_name}: {exc}"}
 
+    logger.debug("run_tool success: tool_name=%s", tool_name)
     if isinstance(result, dict):
         return result
     return {"result": result}
