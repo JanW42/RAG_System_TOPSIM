@@ -1,14 +1,35 @@
-# RAG System TOPSIM
+﻿# RAG System TOPSIM
 
 <p align="center">
-  <img src="frontend/public/Frontend1.png" alt="Frontend" width="46%" />
-  <img src="frontend/public/Frontend2.png" alt="Frontend" width="46%" />
+  <img src="frontend/public/Chat1.png" alt="Frontend"/>
 </p>
 
-Ein RAG-basiertes Chat-System fuer das TOPSIM-Planspiel mit React-Frontend und FastAPI-Backend.
+Ein RAG-basiertes Chat-System fuer das TOPSIM-Planspiel mit React-Frontend und FastAPI-Backend.  
 Das Backend nutzt die Mistral Chat Completions API, festen Handbuch-Kontext und Tool Calling (Wetter + ML-Inferenz).
 
-## Features
+## 💬 Nutzung im Chat (Beispiele)
+
+Du kannst im Chat direkt natuerlich formulieren. Hier sind typische Eingaben als Message-Boxen:
+
+```bash
+# Zeit bis zur Abgabe / Periodenfenster
+Wie viel Zeit habe ich noch bis zur Abgabe?
+```
+
+```bash
+# Potenziellen Absatz schaetzen (P1)
+Gebe mir eine Einschaetzung ueber den potenziellen Absatz, den ich mit Preis 146, Werbung 342 und 8 Vertriebsmitarbeitern erreichen kann.
+```
+
+```bash
+# Erfolgswert schaetzen (P1)
+Gehe die Zahlen einmal durch und schaetze den Erfolgswert fuer Preis 146, Werbung 342, Vertrieb 8, Qualitaet 0, Fertigungsmenge 40000, Investition 0, Fertigungspersonal 23 und angenommenen Absatz 41000.
+```
+
+Hinweis:
+- Fuer praezise Prognosen helfen konkrete Zahlen je Eingabefeld.
+- Ohne konkrete Werte fragt der Assistent nach oder antwortet qualitativ.
+## 🚀 Features
 
 - React Chat-Frontend mit Streaming-Ausgabe (WebSocket)
 - FastAPI Backend (`/api/chat`, `/api/health`, `/ws/chat`)
@@ -20,7 +41,7 @@ Das Backend nutzt die Mistral Chat Completions API, festen Handbuch-Kontext und 
   - aktuelle Periode anhand `settings.py` (`start_date`, `end_date`, `end_uhrzeit`)
 - Fester Handbuch-Kontext aus `knowledge_base/Handbuch_erweitert.md`
 
-## Architektur
+## 🧱 Architektur
 
 ```text
 React/Vite UI
@@ -32,7 +53,7 @@ React/Vite UI
       -> Handbuch-Kontext (knowledge_base/*.md)
 ```
 
-## Projektstruktur
+## 📁 Projektstruktur
 
 ```text
 .
@@ -49,7 +70,7 @@ React/Vite UI
 `- example.env
 ```
 
-## Tool Calling
+## 🛠️ Tool Calling
 
 In `mistral_tools.py` sind aktuell folgende Tools registriert:
 
@@ -57,9 +78,10 @@ In `mistral_tools.py` sind aktuell folgende Tools registriert:
 2. `predict_potentieller_absatz_p1`
 3. `predict_erfolgswert_p1`
 
-Die Tools werden im Mistral-Request als `tools` mitgegeben. Die Orchestrierung (Tool Calls erkennen, Tool ausfuehren, `role="tool"` zurueckgeben, Folgerunde starten) passiert in `main.py` in `_run_mistral_with_tools(...)`.
+Die Tools werden im Mistral-Request als `tools` mitgegeben.  
+Die Orchestrierung (Tool Calls erkennen, Tool ausfuehren, `role="tool"` zurueckgeben, Folgerunde starten) passiert in `main.py` in `_run_mistral_with_tools(...)`.
 
-## ML-Tools (Periode 1)
+## 🤖 ML-Tools (Periode 1)
 
 ### 1) Potenzieller Absatz
 
@@ -103,31 +125,20 @@ Ausgabe:
 Modell:
 - `ML_models/Erfolgswert_p1.joblib`
 
-## Wichtige Hinweise
+## ⚠️ Wichtige Hinweise
 
 - Die Periodendaten koennen nicht live abgerufen werden.
 - Es geschieht keine Datenbankabfrage der aktuellen Unternehmenskennzahlen.
 - Die Periodenlogik basiert ausschliesslich auf den statischen Werten in `settings.py` (`PERIOD_DATE_RANGES`).
 
-## Nutzung im Chat (Beispiele)
 
-Du kannst im Chat direkt natuerlich formulieren. Typische Fragen sind zum Beispiel:
-
-1. `Wie viel Zeit habe ich noch bis zur Abgabe?`
-2. `Gebe mir eine Einschaetzung ueber den potenziellen Absatz, den ich mit Preis 146, Werbung 342 und 8 Vertriebsmitarbeitern erreichen kann.`
-3. `Gehe die Zahlen einmal durch und schaetze den Erfolgswert fuer Preis 146, Werbung 342, Vertrieb 8, Qualitaet 0, Fertigungsmenge 40000, Investition 0, Fertigungspersonal 23 und angenommenen Absatz 41000.`
-
-Hinweis:
-- Fuer praezise Prognosen helfen konkrete Zahlen je Eingabefeld.
-- Ohne konkrete Werte antwortet der Assistent eher qualitativ.
-
-## Voraussetzungen
+## ✅ Voraussetzungen
 
 - Python 3.10+
 - Node.js 18+
 - Gueltiger Mistral API Key
 
-## Installation
+## 🔧 Installation
 
 ### Backend
 
@@ -145,7 +156,7 @@ cd frontend
 npm install
 ```
 
-## Konfiguration (`.env`)
+## ⚙️ Konfiguration (`.env`)
 
 Relevante Variablen:
 
@@ -162,7 +173,7 @@ Relevante Variablen:
 
 Hinweis: Die Zeit-/Periodenlogik wird ueber `settings.py` gesteuert, nicht ueber `.env`.
 
-## Anwendung starten
+## ▶️ Anwendung starten
 
 ### Backend
 
@@ -184,26 +195,23 @@ cd frontend
 npm run dev
 ```
 
-## Ports und lokale Entwicklung
+## 🌐 Ports und lokale Entwicklung
 
-- Frontend laeuft standardmaessig auf `http://localhost:5173`
+- Frontend: `http://localhost:5173`
 - Backend-Default in `main.py`: Port `8004`
-- `frontend/src/App.jsx` nutzt lokal fuer WebSocket derzeit ebenfalls `:8004`
+- `frontend/src/App.jsx` nutzt lokal fuer WebSocket ebenfalls `:8004`
 
 Wichtig:
 - In `frontend/vite.config.js` zeigt der `/api` Proxy aktuell auf `http://localhost:9000`.
 - Wenn du `/api` lokal nutzen willst, passe entweder den Backend-Port oder den Proxy an.
 
-## API Endpunkte
+## 🔌 API Endpunkte
 
-### `GET /api/health`
+- `GET /api/health`
+- `POST /api/chat`
+- `WS /ws/chat`
 
-Liefert Status und Handbuch-Load-Infos.
-
-### `POST /api/chat`
-
-### `WS /ws/chat`
-
-## Lizenz
+## 📄 Lizenz
 
 MIT, siehe [LICENSE](LICENSE).
+
