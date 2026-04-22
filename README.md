@@ -106,8 +106,6 @@ Ausgaben:
 Modell:
 - `ML_models/Potenzieller_Absatz_p1.joblib`
 
-## 🤖 ML-Tools (P1)
-
 ### 2) Erfolgswert
 
 Tool: `predict_erfolgswert_p1`
@@ -188,7 +186,7 @@ Hinweis: Langfuse aggregiert `cost_details` in USD. Bei EUR-Preisen wird daher p
 
 Hinweis: Die Zeit-/Periodenlogik wird ueber `settings.py` gesteuert, nicht ueber `.env`.
 Wenn `LANGFUSE_PUBLIC_KEY` und `LANGFUSE_SECRET_KEY` gesetzt sind, ist Tracing aktiv.
-Der Health-Endpoint zeigt den Status als `langfuse_enabled`.
+Der Health-Endpoint zeigt den Status als `langfuse_enabled` und `langfuse_auth_ok`.
 
 ## Anwendung starten
 
@@ -216,7 +214,8 @@ npm run dev
 
 - Frontend: `http://localhost:5173`
 - Backend-Default in `main.py`: Port `8004`
-- `frontend/src/App.jsx` nutzt lokal fuer WebSocket ebenfalls `:8004`
+- `frontend/src/App.jsx` nutzt lokal fuer WebSocket aktuell `:9001`
+- Alternativ kann der WebSocket per `VITE_WS_URL` explizit gesetzt werden
 
 Wichtig:
 - In `frontend/vite.config.js` zeigt der `/api` Proxy aktuell auf `http://localhost:9000`.
@@ -228,6 +227,12 @@ Wichtig:
 - `POST /api/chat`
 - `POST /api/feedback`
 - `WS /ws/chat`
+
+`POST /api/chat` liefert:
+- `message`
+- `trace_id`
+- `user_id`
+- `session_id`
 
 User/Session-Tracking:
 - `x-user-id` und `x-session-id` werden bevorzugt aus Headern gelesen.
@@ -247,23 +252,24 @@ User/Session-Tracking:
 }
 ```
 
-### 7) Langfuse URL/Keys in Production
+## Langfuse in Production
 
-Backend `.env.production`:
+Aktuelles Setup:
+- Zugriff auf Langfuse ausschliesslich ueber `https://llmroute.de/langfuse/` (HTTPS/443)
+- Reverse Proxy ueber Nginx auf den internen Langfuse-Webcontainer
+- Kein direkter externer Zugriff auf Port `3000`
+
+Backend `.env.production` (Tracking-Client):
 
 ```env
 LANGFUSE_PUBLIC_KEY=pk-lf-...
 LANGFUSE_SECRET_KEY=sk-lf-...
-LANGFUSE_BASE_URL=https://<dein-langfuse-host>
+LANGFUSE_BASE_URL=https://llmroute.de/langfuse
 LANGFUSE_TRACING_ENVIRONMENT=production
+MISTRAL_INPUT_COST_PER_MILLION_EUR=0.5
+MISTRAL_OUTPUT_COST_PER_MILLION_EUR=1.5
+EUR_TO_USD_RATE=1.08
 ```
-
-Empfehlung:
-- Eigene Langfuse-Subdomain nutzen, z. B. `https://langfuse.llmroute.de`
-- Nicht denselben `/test/`-Pfad fuer Langfuse verwenden
-
-Optionaler Pfad-Deploy (`https://llmroute.de/langfuse/`):
-- Siehe [deploy/langfuse-path/README.md](/c:/Users/Dexter/Desktop/RAG_System_TOPSIM/deploy/langfuse-path/README.md)
 
 ## 📄 Lizenz
 
