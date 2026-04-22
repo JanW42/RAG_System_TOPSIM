@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
 
+const USER_ID_STORAGE_KEY = "topsim_user_id";
+const SESSION_ID_STORAGE_KEY = "topsim_session_id";
+
 const initialMessages = [
   {
     role: "assistant",
@@ -10,6 +13,38 @@ const initialMessages = [
 ];
 
 const imageBaseUrl = import.meta.env.BASE_URL;
+
+function getOrCreatePersistentUserId() {
+  try {
+    const existing = window.localStorage.getItem(USER_ID_STORAGE_KEY);
+    if (existing) {
+      return existing;
+    }
+    const created = window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    window.localStorage.setItem(USER_ID_STORAGE_KEY, created);
+    return created;
+  } catch (_error) {
+    return `fallback-user-${Date.now()}`;
+  }
+}
+
+function getOrCreateSessionId() {
+  try {
+    const existing = window.sessionStorage.getItem(SESSION_ID_STORAGE_KEY);
+    if (existing) {
+      return existing;
+    }
+    const created = window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    window.sessionStorage.setItem(SESSION_ID_STORAGE_KEY, created);
+    return created;
+  } catch (_error) {
+    return `fallback-session-${Date.now()}`;
+  }
+}
 
 function LoaderBubble() {
   return (
@@ -121,11 +156,17 @@ function App() {
     const isLocalhost = frontendHost === "localhost" || frontendHost === "127.0.0.1" || frontendHost === "::1";
     const backendHost = isLocalhost ? "127.0.0.1" : frontendHost;
     const defaultWsUrl = isLocalhost
-      //? `${wsProtocol}://${backendHost}:9000/ws/chat`
+      ? `${wsProtocol}://${backendHost}:9001/ws/chat`
       //Achtung !!!! Beim deployen hier wieder den 9000 Port. 8004 ist für lokal
-      ? `${wsProtocol}://${backendHost}:8004/ws/chat`
+      //? `${wsProtocol}://${backendHost}:8004/ws/chat`
       : `${wsProtocol}://${window.location.host}/test/ws/chat`;
-    const wsUrl = import.meta.env.VITE_WS_URL || defaultWsUrl;
+    const userId = getOrCreatePersistentUserId();
+    const sessionId = getOrCreateSessionId();
+    const wsUrlBase = import.meta.env.VITE_WS_URL || defaultWsUrl;
+    const wsUrlObject = new URL(wsUrlBase);
+    wsUrlObject.searchParams.set("user_id", userId);
+    wsUrlObject.searchParams.set("session_id", sessionId);
+    const wsUrl = wsUrlObject.toString();
 
     let gotFirstDelta = false;
     const socket = new WebSocket(wsUrl);

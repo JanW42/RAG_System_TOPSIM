@@ -36,6 +36,7 @@ Hinweis:
 - Tool Calling mit Mistral (`tool_choice=auto`)
 - Zwei ML-Vorhersage-Tools (Periode 1) ueber `joblib`-Modelle
 - Wetter-Tool via Open-Meteo API
+- Langfuse Observability via `@observe`-Dekoratoren (HTTP, WebSocket, Tool-Loop, Tools)
 - Dynamisches Kontext-Engineering im Systemkontext:
   - aktuelle Uhrzeit/Tag (interne Systemzeit)
   - aktuelle Periode anhand `settings.py` (`start_date`, `end_date`, `end_uhrzeit`)
@@ -173,9 +174,21 @@ UVICORN_PORT=8004
 UVICORN_RELOAD=true
 UVICORN_LOG_LEVEL=info
 APP_LOG_LEVEL=INFO
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://cloud.langfuse.com
+LANGFUSE_TRACING_ENVIRONMENT=production
+MISTRAL_MAX_RETRIES=4
+MISTRAL_RETRY_BASE_DELAY_SECONDS=1.5
+MISTRAL_INPUT_COST_PER_MILLION_EUR=0.5
+MISTRAL_OUTPUT_COST_PER_MILLION_EUR=1.5
+EUR_TO_USD_RATE=1.08
 ```
+Hinweis: Langfuse aggregiert `cost_details` in USD. Bei EUR-Preisen wird daher per `EUR_TO_USD_RATE` nach USD umgerechnet.
 
 Hinweis: Die Zeit-/Periodenlogik wird ueber `settings.py` gesteuert, nicht ueber `.env`.
+Wenn `LANGFUSE_PUBLIC_KEY` und `LANGFUSE_SECRET_KEY` gesetzt sind, ist Tracing aktiv.
+Der Health-Endpoint zeigt den Status als `langfuse_enabled`.
 
 ## Anwendung starten
 
@@ -213,9 +226,45 @@ Wichtig:
 
 - `GET /api/health`
 - `POST /api/chat`
+- `POST /api/feedback`
 - `WS /ws/chat`
+
+User/Session-Tracking:
+- `x-user-id` und `x-session-id` werden bevorzugt aus Headern gelesen.
+- Alternativ werden `user_id` und `session_id` aus Query-Parametern gelesen.
+- Wenn keine Werte vorhanden sind, erzeugt das Backend Fallback-Werte.
+- `POST /api/chat` liefert `trace_id`, `user_id`, `session_id` in der Antwort.
+- `WS /ws/chat` liefert bei `type=done` ebenfalls `trace_id`, `user_id`, `session_id`.
+
+`/api/feedback` ermoeglicht das Speichern von Scores in Langfuse (z. B. User-Feedback):
+
+```json
+{
+  "trace_id": "your-trace-id",
+  "score_name": "user_feedback",
+  "value": 1.0,
+  "comment": "Hilfreich"
+}
+```
+
+### 7) Langfuse URL/Keys in Production
+
+Backend `.env.production`:
+
+```env
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_BASE_URL=https://<dein-langfuse-host>
+LANGFUSE_TRACING_ENVIRONMENT=production
+```
+
+Empfehlung:
+- Eigene Langfuse-Subdomain nutzen, z. B. `https://langfuse.llmroute.de`
+- Nicht denselben `/test/`-Pfad fuer Langfuse verwenden
+
+Optionaler Pfad-Deploy (`https://llmroute.de/langfuse/`):
+- Siehe [deploy/langfuse-path/README.md](/c:/Users/Dexter/Desktop/RAG_System_TOPSIM/deploy/langfuse-path/README.md)
 
 ## 📄 Lizenz
 
 MIT, siehe [LICENSE](LICENSE).
-

@@ -10,6 +10,7 @@ node_modules
 knowledge_base
 ML_models
 ml_inferenz_agent_tool.py
+/deploy
 
 # Distribution / packaging
 .Python

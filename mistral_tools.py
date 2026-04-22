@@ -9,6 +9,8 @@ import httpx
 import joblib
 import pandas as pd
 
+from observability import observe, update_current_span
+
 logger = logging.getLogger("rag.tools")
 
 
@@ -112,6 +114,7 @@ def _build_feature_row_erfolg(
     return pd.DataFrame([row], columns=_feature_cols_erfolg)
 
 
+@observe(name="tool-predict-potentieller-absatz-p1", as_type="tool")
 def tool_predict_potentieller_absatz_p1(
     preis: int,
     werbung: int,
@@ -181,6 +184,7 @@ def tool_predict_potentieller_absatz_p1(
     }
 
 
+@observe(name="tool-predict-erfolgswert-p1", as_type="tool")
 def tool_predict_erfolgswert_p1(
     preis: int,
     werbung: int,
@@ -279,6 +283,7 @@ def _parse_env_float(value: str, fallback: float) -> float:
         return fallback
 
 
+@observe(name="tool-weather-info", as_type="tool")
 def tool_weather_info() -> dict:
     """Tool 3: Holt aktuelles Wetter ueber Open-Meteo fuer konfigurierte Koordinaten."""
     lat = _parse_env_float(WEATHER_LAT, 51.96836872216043)
@@ -417,11 +422,13 @@ TOOL_FUNCTIONS: Dict[str, Callable[..., dict]] = {
 }
 
 
+@observe(name="tool-dispatch", as_type="span")
 def run_tool(tool_name: str, arguments_raw: Any) -> dict:
     logger.debug("run_tool dispatch: tool_name=%s args_type=%s", tool_name, type(arguments_raw).__name__)
     fn = TOOL_FUNCTIONS.get(tool_name)
     if fn is None:
         logger.warning("run_tool unknown tool: %s", tool_name)
+        update_current_span(level="ERROR", status_message=f"Unknown tool: {tool_name}")
         return {"error": f"Unbekanntes Tool: {tool_name}"}
 
     args: dict = {}
@@ -432,6 +439,7 @@ def run_tool(tool_name: str, arguments_raw: Any) -> dict:
                 args = parsed
         except json.JSONDecodeError:
             logger.warning("run_tool invalid json args: tool_name=%s args=%s", tool_name, arguments_raw)
+            update_current_span(level="ERROR", status_message="Invalid tool args JSON")
             return {"error": f"Ungueltige Tool-Argumente fuer {tool_name}: {arguments_raw}"}
     elif isinstance(arguments_raw, dict):
         args = arguments_raw
@@ -440,9 +448,11 @@ def run_tool(tool_name: str, arguments_raw: Any) -> dict:
         result = fn(**args)
     except TypeError as exc:
         logger.exception("run_tool type error: tool_name=%s", tool_name)
+        update_current_span(level="ERROR", status_message=f"TypeError in {tool_name}")
         return {"error": f"Ungueltige Argumente fuer {tool_name}: {exc}"}
     except Exception as exc:
         logger.exception("run_tool tool error: tool_name=%s", tool_name)
+        update_current_span(level="ERROR", status_message=f"Tool error in {tool_name}")
         return {"error": f"Tool-Fehler in {tool_name}: {exc}"}
 
     logger.debug("run_tool success: tool_name=%s", tool_name)

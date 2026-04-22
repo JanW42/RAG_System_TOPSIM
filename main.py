@@ -1,21 +1,38 @@
 import json
 import logging
 import os
+import random
+import asyncio
+import time
+import uuid
 from datetime import datetime
+from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, List, Literal
 
 import httpx
 import uvicorn
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from mistral_tools import TOOLS_JSON, run_tool
-from settings import PERIOD_DATE_RANGES
-
 load_dotenv()
+
+from mistral_tools import TOOLS_JSON, run_tool
+from observability import (
+    LANGFUSE_ENABLED,
+    create_score,
+    flush_observability,
+    get_current_trace_id,
+    initialize_observability,
+    langfuse_auth_ok,
+    observe,
+    trace_attributes,
+    update_current_generation,
+    update_current_span,
+)
+from settings import PERIOD_DATE_RANGES
 
 
 def _configure_logging() -> logging.Logger:
@@ -37,6 +54,15 @@ MISTRAL_API_KEY = os.getenv("MISTRAL_API_KEY", "")
 MISTRAL_MODEL = os.getenv("MISTRAL_MODEL", "mistral-small-latest")
 MISTRAL_API_URL = "https://api.mistral.ai/v1/chat/completions"
 HANDBUCH_PATH = os.getenv("HANDBUCH_PATH", "knowledge_base/Handbuch_erweitert.md")
+MISTRAL_MAX_RETRIES = int(os.getenv("MISTRAL_MAX_RETRIES", "4"))
+MISTRAL_RETRY_BASE_DELAY_SECONDS = float(os.getenv("MISTRAL_RETRY_BASE_DELAY_SECONDS", "1.5"))
+MISTRAL_INPUT_COST_PER_MILLION_EUR = float(
+    os.getenv("MISTRAL_INPUT_COST_PER_MILLION_EUR", "0.5")
+)
+MISTRAL_OUTPUT_COST_PER_MILLION_EUR = float(
+    os.getenv("MISTRAL_OUTPUT_COST_PER_MILLION_EUR", "1.5")
+)
+EUR_TO_USD_RATE = float(os.getenv("EUR_TO_USD_RATE", "1.08"))
 
 SYSTEM_PROMPT = (
     "Du bist ein hilfreicher Assistent. Du bist Mistral AI in einem von Jan"
@@ -88,6 +114,16 @@ class ChatRequest(BaseModel):
 
 class ChatResponse(BaseModel):
     message: str
+    trace_id: str | None = None
+    user_id: str | None = None
+    session_id: str | None = None
+
+
+class FeedbackRequest(BaseModel):
+    trace_id: str = Field(min_length=1)
+    score_name: str = Field(default="user_feedback", min_length=1)
+    value: float
+    comment: str | None = None
 
 
 app = FastAPI(title="Mistral Live Chat Wrapper")
@@ -114,6 +150,8 @@ async def health() -> dict:
         "handbuch_path": HANDBUCH_PATH,
         "handbuch_loaded": bool(HANDBUCH_TEXT),
         "handbuch_chars": len(HANDBUCH_TEXT),
+        "langfuse_enabled": LANGFUSE_ENABLED,
+        "langfuse_auth_ok": langfuse_auth_ok(),
     }
 
 
@@ -186,12 +224,169 @@ def _extract_delta_from_stream_event(event: Any) -> str:
     return ""
 
 
+def _extract_finish_reason_from_stream_event(event: Any) -> str:
+    data = _as_dict(event)
+    choices = data.get("choices", [])
+    if not choices:
+        stream_data = data.get("data", {})
+        choices = _as_dict(stream_data).get("choices", [])
+    if not choices:
+        return ""
+    return str(_as_dict(choices[0]).get("finish_reason", "") or "")
+
+
+def _extract_usage_from_completion(result: Any) -> dict:
+    data = _as_dict(result)
+    usage = _as_dict(data.get("usage", {}))
+    if not usage:
+        return {}
+
+    prompt_tokens = usage.get("prompt_tokens")
+    completion_tokens = usage.get("completion_tokens")
+    total_tokens = usage.get("total_tokens")
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+
+    usage_details: dict[str, Any] = {}
+    if isinstance(input_tokens, (int, float)):
+        usage_details["input"] = int(input_tokens)
+    elif isinstance(prompt_tokens, (int, float)):
+        usage_details["input"] = int(prompt_tokens)
+
+    if isinstance(output_tokens, (int, float)):
+        usage_details["output"] = int(output_tokens)
+    elif isinstance(completion_tokens, (int, float)):
+        usage_details["output"] = int(completion_tokens)
+
+    if isinstance(total_tokens, (int, float)):
+        usage_details["total"] = int(total_tokens)
+
+    return usage_details
+
+
+def _extract_usage_from_stream_event(event: Any) -> dict:
+    data = _as_dict(event)
+    usage = _as_dict(data.get("usage", {}))
+    if not usage:
+        usage = _as_dict(_as_dict(data.get("data", {})).get("usage", {}))
+    if not usage:
+        return {}
+
+    input_tokens = usage.get("input_tokens", usage.get("prompt_tokens"))
+    output_tokens = usage.get("output_tokens", usage.get("completion_tokens"))
+    total_tokens = usage.get("total_tokens")
+
+    parsed: dict[str, Any] = {}
+    if isinstance(input_tokens, (int, float)):
+        parsed["input"] = int(input_tokens)
+    if isinstance(output_tokens, (int, float)):
+        parsed["output"] = int(output_tokens)
+    if isinstance(total_tokens, (int, float)):
+        parsed["total"] = int(total_tokens)
+    return parsed
+
+
+def _estimate_mistral_cost_eur(usage_details: dict) -> dict:
+    input_tokens = int(usage_details.get("input", 0) or 0)
+    output_tokens = int(usage_details.get("output", 0) or 0)
+    input_cost = (input_tokens / 1_000_000) * MISTRAL_INPUT_COST_PER_MILLION_EUR
+    output_cost = (output_tokens / 1_000_000) * MISTRAL_OUTPUT_COST_PER_MILLION_EUR
+    total_cost = input_cost + output_cost
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "input_cost_eur": round(input_cost, 10),
+        "output_cost_eur": round(output_cost, 10),
+        "total_cost_eur": round(total_cost, 10),
+        "pricing": {
+            "input_per_million_eur": MISTRAL_INPUT_COST_PER_MILLION_EUR,
+            "output_per_million_eur": MISTRAL_OUTPUT_COST_PER_MILLION_EUR,
+            "model": MISTRAL_MODEL,
+        },
+    }
+
+
+def _build_langfuse_cost_details_usd(usage_details: dict) -> dict:
+    # Langfuse cost_details are interpreted as USD for built-in cost analytics.
+    input_tokens = int(usage_details.get("input", 0) or 0)
+    output_tokens = int(usage_details.get("output", 0) or 0)
+
+    input_cost_eur = (input_tokens / 1_000_000) * MISTRAL_INPUT_COST_PER_MILLION_EUR
+    output_cost_eur = (output_tokens / 1_000_000) * MISTRAL_OUTPUT_COST_PER_MILLION_EUR
+    input_cost_usd = input_cost_eur * EUR_TO_USD_RATE
+    output_cost_usd = output_cost_eur * EUR_TO_USD_RATE
+
+    return {
+        "input": round(input_cost_usd, 10),
+        "output": round(output_cost_usd, 10),
+        "total": round(input_cost_usd + output_cost_usd, 10),
+    }
+
+
 def _require_api_key() -> None:
     if not MISTRAL_API_KEY:
         raise HTTPException(
             status_code=500,
             detail="MISTRAL_API_KEY is missing. Add it to your environment or .env file.",
         )
+
+
+def _parse_retry_after_seconds(value: str | None) -> float | None:
+    if not value:
+        return None
+    try:
+        retry_after = float(value.strip())
+        if retry_after >= 0:
+            return retry_after
+    except ValueError:
+        return None
+    return None
+
+
+def _compute_429_backoff(attempt: int, retry_after_value: str | None) -> float:
+    retry_after = _parse_retry_after_seconds(retry_after_value)
+    if retry_after is not None:
+        return retry_after
+    base = MISTRAL_RETRY_BASE_DELAY_SECONDS * (2 ** max(0, attempt - 1))
+    jitter = random.uniform(0.0, 0.75)
+    return min(30.0, base + jitter)
+
+
+def _build_fallback_user_id(client_host: str | None) -> str:
+    if client_host:
+        return f"anonymous-{client_host}"
+    return "anonymous"
+
+
+def _resolve_http_user_and_session_id(http_request: Request) -> tuple[str, str]:
+    client_host = http_request.client.host if http_request.client else None
+    user_id = (
+        http_request.headers.get("x-user-id")
+        or http_request.query_params.get("user_id")
+        or _build_fallback_user_id(client_host)
+    )
+    session_id = (
+        http_request.headers.get("x-session-id")
+        or http_request.query_params.get("session_id")
+        or f"http-{uuid.uuid4()}"
+    )
+    return user_id, session_id
+
+
+def _resolve_ws_user_and_session_id(websocket: WebSocket) -> tuple[str, str]:
+    client = getattr(websocket, "client", None)
+    client_host = client.host if client else None
+    user_id = (
+        websocket.headers.get("x-user-id")
+        or websocket.query_params.get("user_id")
+        or _build_fallback_user_id(client_host)
+    )
+    session_id = (
+        websocket.headers.get("x-session-id")
+        or websocket.query_params.get("session_id")
+        or f"ws-{uuid.uuid4()}"
+    )
+    return user_id, session_id
 
 
 def _get_current_period_info(now: datetime) -> str:
@@ -246,6 +441,7 @@ def _get_current_period_info(now: datetime) -> str:
     )
 
 
+@observe(name="build-runtime-context-prompt", as_type="span", capture_output=False)
 async def _build_runtime_context_prompt() -> str:
     now = datetime.now().astimezone()
     system_tz_label = now.tzname() or "Systemzeit"
@@ -272,6 +468,7 @@ async def _build_runtime_context_prompt() -> str:
         f"- {period_info}"
     )
 
+@observe(name="build-messages", as_type="span", capture_output=False)
 async def _build_messages(messages: List[Message]) -> List[dict]:
     model_messages = [message.model_dump() for message in messages]
     runtime_context_prompt = await _build_runtime_context_prompt()
@@ -286,10 +483,12 @@ async def _build_messages(messages: List[Message]) -> List[dict]:
     return model_messages
 
 
+@observe(name="mistral-chat-completion", as_type="generation", capture_input=False)
 async def _post_mistral(messages: List[dict], timeout_seconds: float = 60.0) -> dict:
     headers = {
         "Authorization": f"Bearer {MISTRAL_API_KEY}",
         "Content-Type": "application/json",
+        "Accept": "application/json",
     }
     payload = {
         "model": MISTRAL_MODEL,
@@ -307,15 +506,70 @@ async def _post_mistral(messages: List[dict], timeout_seconds: float = 60.0) -> 
         timeout_seconds,
     )
 
+    request_started = time.perf_counter()
     async with httpx.AsyncClient(timeout=timeout_seconds) as client:
-        response = await client.post(
-            MISTRAL_API_URL,
-            headers=headers,
-            json=payload,
-        )
-        logger.debug("Mistral response status=%s", response.status_code)
-        response.raise_for_status()
-        return response.json()
+        for attempt in range(1, MISTRAL_MAX_RETRIES + 1):
+            response = await client.post(
+                MISTRAL_API_URL,
+                headers=headers,
+                json=payload,
+            )
+            logger.debug("Mistral response status=%s (attempt=%d)", response.status_code, attempt)
+            if response.status_code == 429 and attempt < MISTRAL_MAX_RETRIES:
+                wait_seconds = _compute_429_backoff(
+                    attempt=attempt,
+                    retry_after_value=response.headers.get("retry-after"),
+                )
+                logger.warning(
+                    "Mistral rate limit (429) in _post_mistral. Retry in %.2fs (attempt=%d/%d).",
+                    wait_seconds,
+                    attempt,
+                    MISTRAL_MAX_RETRIES,
+                )
+                await asyncio.sleep(wait_seconds)
+                continue
+
+            response.raise_for_status()
+            if not response.content:
+                raise httpx.HTTPError("Mistral API returned an empty response body.")
+            try:
+                data = response.json()
+            except JSONDecodeError as exc:
+                content_type = response.headers.get("content-type", "")
+                body_preview = response.text[:300].replace("\n", " ").strip()
+                logger.error(
+                    "Mistral response is not valid JSON (status=%s, content_type=%s, body_preview=%s)",
+                    response.status_code,
+                    content_type,
+                    body_preview,
+                )
+                raise httpx.HTTPError(
+                    "Mistral API returned non-JSON response. "
+                    f"status={response.status_code}, content_type={content_type}"
+                ) from exc
+            usage_details = _extract_usage_from_completion(data)
+            cost_estimate = _estimate_mistral_cost_eur(usage_details)
+            cost_details = _build_langfuse_cost_details_usd(usage_details)
+            latency_ms = int((time.perf_counter() - request_started) * 1000)
+            update_current_generation(
+                model=MISTRAL_MODEL,
+                input=messages,
+                metadata={
+                    "status_code": response.status_code,
+                    "attempt": attempt,
+                    "latency_ms": latency_ms,
+                    "mistral_request_id": response.headers.get("x-request-id", ""),
+                    "mistral_processing_ms": response.headers.get("x-processing-ms", ""),
+                    "cost_estimate_eur": cost_estimate,
+                    "mode": "non_stream",
+                },
+                usage_details=usage_details,
+                cost_details=cost_details,
+                output=_extract_content_from_completion(data),
+            )
+            return data
+
+    raise httpx.HTTPError("Mistral API request failed after retries.")
 
 
 def _normalize_content(content: Any) -> str:
@@ -330,10 +584,14 @@ def _normalize_content(content: Any) -> str:
     return ""
 
 
+@observe(name="mistral-tool-loop", as_type="agent", capture_input=False)
 async def _run_mistral_with_tools(messages: List[dict], max_rounds: int = 5) -> str:
     working_messages = list(messages)
+    tool_call_count = 0
+    tool_names: list[str] = []
 
     for round_idx in range(1, max_rounds + 1):
+        update_current_span(metadata={"round_index": round_idx})
         logger.debug("Tool-Loop Runde %d gestartet (messages=%d).", round_idx, len(working_messages))
         result = await _post_mistral(messages=working_messages, timeout_seconds=90.0)
         assistant_message = _extract_message_from_completion(result)
@@ -366,6 +624,9 @@ async def _run_mistral_with_tools(messages: List[dict], max_rounds: int = 5) -> 
             function_data = _as_dict(tool_call_data.get("function", {}))
             tool_name = function_data.get("name", "")
             tool_args = function_data.get("arguments", {})
+            tool_call_count += 1
+            if tool_name:
+                tool_names.append(tool_name)
             logger.debug("Tool-Call erkannt: name=%s, call_id=%s", tool_name, tool_call_data.get("id", ""))
             tool_result = run_tool(tool_name=tool_name, arguments_raw=tool_args)
             logger.debug(
@@ -382,24 +643,177 @@ async def _run_mistral_with_tools(messages: List[dict], max_rounds: int = 5) -> 
                     "content": json.dumps(tool_result, ensure_ascii=False),
                 }
             )
+            update_current_span(
+                metadata={
+                    "tool_call_count": tool_call_count,
+                    "tool_names": tool_names,
+                }
+            )
 
     logger.warning("Maximale Tool-Rundenzahl erreicht (%d).", max_rounds)
     return "Die Tool-Ausfuehrung hat die maximale Rundenzahl erreicht."
 
 
+@observe(name="ws-stream-response", as_type="generation", capture_input=False, capture_output=False)
 async def _stream_mistral_via_http(messages: List[dict], websocket: WebSocket) -> None:
-    final_text = await _run_mistral_with_tools(messages=messages)
-    if not final_text:
-        logger.warning("Kein finaler Text fuer Streaming erzeugt.")
+    headers = {
+        "Authorization": f"Bearer {MISTRAL_API_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    payload = {
+        "model": MISTRAL_MODEL,
+        "messages": messages,
+        "stream": True,
+        "response_format": {"type": "text"},
+        "tools": TOOLS_JSON,
+        "tool_choice": "auto",
+    }
+
+    got_stream_text = False
+    saw_tool_call_finish = False
+    streamed_output_chunks: list[str] = []
+    stream_usage_details: dict[str, Any] = {}
+    stream_attempt = 0
+    stream_status_code = 0
+    stream_request_id = ""
+    request_started = time.perf_counter()
+
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        stream_error: Exception | None = None
+        for attempt in range(1, MISTRAL_MAX_RETRIES + 1):
+            stream_attempt = attempt
+            try:
+                async with client.stream(
+                    "POST",
+                    MISTRAL_API_URL,
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    stream_status_code = response.status_code
+                    stream_request_id = response.headers.get("x-request-id", "")
+                    logger.debug(
+                        "Mistral stream response status=%s (attempt=%d)",
+                        response.status_code,
+                        attempt,
+                    )
+                    if response.status_code == 429 and attempt < MISTRAL_MAX_RETRIES:
+                        wait_seconds = _compute_429_backoff(
+                            attempt=attempt,
+                            retry_after_value=response.headers.get("retry-after"),
+                        )
+                        logger.warning(
+                            "Mistral rate limit (429) in stream. Retry in %.2fs (attempt=%d/%d).",
+                            wait_seconds,
+                            attempt,
+                            MISTRAL_MAX_RETRIES,
+                        )
+                        await asyncio.sleep(wait_seconds)
+                        continue
+
+                    response.raise_for_status()
+
+                    async for line in response.aiter_lines():
+                        if not line or not line.startswith("data:"):
+                            continue
+                        raw_data = line[5:].strip()
+                        if not raw_data or raw_data == "[DONE]":
+                            continue
+
+                        try:
+                            event = json.loads(raw_data)
+                        except json.JSONDecodeError:
+                            logger.debug("Ungueltiges SSE-Event ignoriert: %s", raw_data[:120])
+                            continue
+
+                        event_usage = _extract_usage_from_stream_event(event)
+                        if event_usage:
+                            stream_usage_details = event_usage
+
+                        finish_reason = _extract_finish_reason_from_stream_event(event)
+                        if finish_reason == "tool_calls":
+                            saw_tool_call_finish = True
+                            break
+
+                        delta = _extract_delta_from_stream_event(event)
+                        if delta:
+                            got_stream_text = True
+                            streamed_output_chunks.append(delta)
+                            await websocket.send_json({"type": "delta", "content": delta})
+                stream_error = None
+                break
+            except (httpx.HTTPStatusError, httpx.HTTPError) as exc:
+                stream_error = exc
+                if attempt >= MISTRAL_MAX_RETRIES:
+                    break
+                wait_seconds = _compute_429_backoff(attempt=attempt, retry_after_value=None)
+                logger.warning(
+                    "Stream request failed (%s). Retry in %.2fs (attempt=%d/%d).",
+                    type(exc).__name__,
+                    wait_seconds,
+                    attempt,
+                    MISTRAL_MAX_RETRIES,
+                )
+                await asyncio.sleep(wait_seconds)
+        if stream_error is not None:
+            raise stream_error
+
+    if saw_tool_call_finish:
+        logger.debug("Tool-Call im Stream erkannt, fallback auf Tool-Loop.")
+        final_text = await _run_mistral_with_tools(messages=messages)
+        if final_text:
+            latency_ms = int((time.perf_counter() - request_started) * 1000)
+            cost_estimate = _estimate_mistral_cost_eur(stream_usage_details)
+            cost_details = _build_langfuse_cost_details_usd(stream_usage_details)
+            update_current_generation(
+                model=MISTRAL_MODEL,
+                input=messages,
+                usage_details=stream_usage_details,
+                cost_details=cost_details,
+                metadata={
+                    "stream": True,
+                    "fallback_tool_loop": True,
+                    "latency_ms": latency_ms,
+                    "attempt": stream_attempt,
+                    "status_code": stream_status_code,
+                    "mistral_request_id": stream_request_id,
+                    "cost_estimate_eur": cost_estimate,
+                    "mode": "stream_then_tool_loop",
+                },
+                output=final_text,
+            )
+            await websocket.send_json({"type": "delta", "content": final_text})
         return
 
-    chunk_size = 120
-    logger.debug("Streaming gestartet: text_len=%d, chunk_size=%d", len(final_text), chunk_size)
-    for i in range(0, len(final_text), chunk_size):
-        await websocket.send_json({"type": "delta", "content": final_text[i : i + chunk_size]})
+    if not got_stream_text:
+        logger.warning("Stream lieferte keinen Text-Delta-Output.")
+    else:
+        latency_ms = int((time.perf_counter() - request_started) * 1000)
+        combined_output = "".join(streamed_output_chunks)
+        cost_estimate = _estimate_mistral_cost_eur(stream_usage_details)
+        cost_details = _build_langfuse_cost_details_usd(stream_usage_details)
+        update_current_generation(
+            model=MISTRAL_MODEL,
+            input=messages,
+            usage_details=stream_usage_details,
+            cost_details=cost_details,
+            metadata={
+                "stream": True,
+                "fallback_tool_loop": False,
+                "latency_ms": latency_ms,
+                "attempt": stream_attempt,
+                "status_code": stream_status_code,
+                "mistral_request_id": stream_request_id,
+                "output_chars": len(combined_output),
+                "cost_estimate_eur": cost_estimate,
+                "mode": "stream",
+            },
+            output=combined_output,
+        )
 
 
 @app.websocket("/ws/chat")
+@observe(name="ws-chat", as_type="span", capture_output=False)
 async def chat_ws(websocket: WebSocket):
     await websocket.accept()
     client = getattr(websocket, "client", None)
@@ -420,14 +834,28 @@ async def chat_ws(websocket: WebSocket):
             payload = await websocket.receive_json()
             request = ChatRequest.model_validate(payload)
             logger.debug("WS request empfangen: messages=%d", len(request.messages))
-            messages = await _build_messages(request.messages)
+            user_id, session_id = _resolve_ws_user_and_session_id(websocket)
+            with trace_attributes(
+                session_id=session_id,
+                user_id=user_id,
+                trace_name="ws-chat",
+                metadata={"endpoint": "ws_chat"},
+            ):
+                messages = await _build_messages(request.messages)
 
-            try:
-                await _stream_mistral_via_http(messages=messages, websocket=websocket)
-                await websocket.send_json({"type": "done"})
-            except Exception as exc:
-                logger.exception("Fehler im WS-Request-Loop: %s", exc)
-                await websocket.send_json({"type": "error", "content": str(exc)})
+                try:
+                    await _stream_mistral_via_http(messages=messages, websocket=websocket)
+                    await websocket.send_json(
+                        {
+                            "type": "done",
+                            "trace_id": get_current_trace_id(),
+                            "user_id": user_id,
+                            "session_id": session_id,
+                        }
+                    )
+                except Exception as exc:
+                    logger.exception("Fehler im WS-Request-Loop: %s", exc)
+                    await websocket.send_json({"type": "error", "content": str(exc)})
     except WebSocketDisconnect:
         logger.info("WebSocket disconnected: %s", client)
         return
@@ -438,28 +866,65 @@ async def chat_ws(websocket: WebSocket):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest) -> ChatResponse:
+@observe(name="http-chat", as_type="span", capture_output=False)
+async def chat(request: ChatRequest, http_request: Request) -> ChatResponse:
     _require_api_key()
     logger.info("HTTP /api/chat request: messages=%d", len(request.messages))
 
-    messages = await _build_messages(request.messages)
-    try:
-        message = await _run_mistral_with_tools(messages=messages, max_rounds=5)
-    except httpx.HTTPStatusError as exc:
-        logger.exception("HTTPStatusError von Mistral: %s", exc)
-        raise HTTPException(
-            status_code=exc.response.status_code,
-            detail=f"Mistral API error: {exc.response.text}",
-        ) from exc
-    except httpx.HTTPError as exc:
-        logger.exception("HTTPError von Mistral: %s", exc)
-        raise HTTPException(status_code=502, detail=f"Mistral API error: {str(exc)}") from exc
+    user_id, session_id = _resolve_http_user_and_session_id(http_request)
+    with trace_attributes(
+        session_id=session_id,
+        user_id=user_id,
+        trace_name="http-chat",
+        metadata={"endpoint": "api_chat"},
+    ):
+        messages = await _build_messages(request.messages)
+        try:
+            message = await _run_mistral_with_tools(messages=messages, max_rounds=5)
+        except httpx.HTTPStatusError as exc:
+            logger.exception("HTTPStatusError von Mistral: %s", exc)
+            raise HTTPException(
+                status_code=exc.response.status_code,
+                detail=f"Mistral API error: {exc.response.text}",
+            ) from exc
+        except httpx.HTTPError as exc:
+            logger.exception("HTTPError von Mistral: %s", exc)
+            raise HTTPException(status_code=502, detail=f"Mistral API error: {str(exc)}") from exc
     if not message:
         logger.warning("Leere Antwort von Mistral fuer /api/chat.")
         raise HTTPException(status_code=502, detail="Mistral API returned an empty reply.")
 
     logger.debug("HTTP /api/chat response_len=%d", len(message))
-    return ChatResponse(message=message)
+    return ChatResponse(
+        message=message,
+        trace_id=get_current_trace_id(),
+        user_id=user_id,
+        session_id=session_id,
+    )
+
+
+@app.post("/api/feedback")
+@observe(name="http-feedback", as_type="span", capture_output=False)
+async def feedback(request: FeedbackRequest) -> dict:
+    create_score(
+        name=request.score_name,
+        value=request.value,
+        trace_id=request.trace_id,
+        data_type="NUMERIC",
+        comment=request.comment,
+    )
+    flush_observability()
+    return {"status": "ok"}
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    flush_observability()
+
+
+@app.on_event("startup")
+async def on_startup() -> None:
+    initialize_observability()
 
 
 if __name__ == "__main__":
