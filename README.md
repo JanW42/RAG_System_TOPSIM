@@ -1,6 +1,6 @@
-# TOPSIM RAG Assistant
+# TOPSIM Assistant
 
-RAG-orientiertes Chat-System fuer das TOPSIM-Planspiel mit React-Frontend und FastAPI-Backend.
+Kontext injection Chat-System fuer das TOPSIM-Planspiel mit React-Frontend und FastAPI-Backend.
 Das System kombiniert:
 
 - festen Wissenskontext aus einem Handbuch (`knowledge_base/Handbuch_erweitert.md`)
@@ -13,10 +13,6 @@ Das System kombiniert:
 Das Projekt ist ein didaktischer Tutor-Assistent fuer Studierende im Planspiel-Kontext.
 Der Assistent erklaert, strukturiert und unterstuetzt bei Entscheidungen, trifft aber keine Entscheidungen fuer Nutzer.
 
-Wichtig zur Einordnung:
-
-- Es gibt kein Vektor-Indexing / keine semantische Retrieval-Pipeline.
-- "RAG" bedeutet hier: fester, serverseitig injizierter Handbuch/Transferwissen kontext plus Runtime-Kontext (Zeit/Periode).
 - Unternehmensdaten werden nicht live aus TOPSIM oder einer Datenbank geladen.
 
 ## Architektur
@@ -94,6 +90,10 @@ Beispiel:
 ```powershell
 locust -f locustfile.py --headless -u 5 -r 1 -t 2m --host https://llmroute.de
 ```
+
+## Transport-Sicherheit
+
+Die Kommunikation wird bevorzugt durchgaengig ueber TLS 1.3 abgesichert, mit X25519 fuer den Schluesselaustausch und AES_256_GCM als Cipher Suite. Diese Konfiguration bietet einen starken, modernen Standard.
 
 ## Betriebsgrenzen und Risiken
 
