@@ -1,6 +1,6 @@
-# TOPSIM Assistant
+# Tutor AI
 
-Kontext injection Chat-System fuer das TOPSIM-Planspiel mit React-Frontend und FastAPI-Backend.
+Kontext injection Chat-System fuer das Planspiel mit React-Frontend und FastAPI-Backend.
 Das System kombiniert:
 
 - festen Wissenskontext aus einem Handbuch (`knowledge_base/Handbuch_erweitert.md`)
